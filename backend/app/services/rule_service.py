@@ -16,7 +16,7 @@ RULE_TYPE_COLUMN_TYPES = {
 
 
 def list_rules(db: Session, dataset_id: int | None = None, active_only: bool = False) -> list[QualityRule]:
-    query = db.query(QualityRule)
+    query = db.query(QualityRule).filter(QualityRule.is_deleted.is_(False))
     if dataset_id is not None:
         query = query.filter(QualityRule.dataset_id == dataset_id)
     if active_only:
@@ -74,7 +74,11 @@ def create_rule(db: Session, actor: User, payload) -> QualityRule:
     params = validate_params(payload.rule_type, payload.params, list(profiles.keys()))
     existing = (
         db.query(QualityRule)
-        .filter(QualityRule.dataset_id == payload.dataset_id, QualityRule.name == payload.name)
+        .filter(
+            QualityRule.dataset_id == payload.dataset_id,
+            QualityRule.name == payload.name,
+            QualityRule.is_deleted.is_(False),
+        )
         .first()
     )
     if existing:
@@ -130,6 +134,7 @@ def update_rule(db: Session, actor: User, rule: QualityRule, payload) -> tuple[Q
                 QualityRule.dataset_id == rule.dataset_id,
                 QualityRule.name == payload.name,
                 QualityRule.id != rule.id,
+                QualityRule.is_deleted.is_(False),
             )
             .first()
         )
@@ -162,12 +167,12 @@ def toggle_rule(db: Session, actor: User, rule: QualityRule, is_active: bool) ->
 
 
 def delete_rule(db: Session, actor: User, rule: QualityRule) -> dict:
+    """Soft delete: the rule leaves every list/execution, but the row and its
+    issues stay so historical batches keep their evidence intact."""
     _assert_can_edit(actor, rule)
     before = {"id": rule.id, "name": rule.name, "dataset_id": rule.dataset_id}
-    db.query(QualityRule).filter(QualityRule.id == rule.id).delete()
-    from app.models import Issue
-
-    db.query(Issue).filter(Issue.rule_id == rule.id).delete()
+    rule.is_deleted = True
+    rule.is_active = False
     db.commit()
     log_event("AUDIT_RULE_DELETE", rule_id=before["id"], dataset_id=before["dataset_id"])
     return before

@@ -12,8 +12,19 @@
       ></span>
       <span class="text-[12.5px] w-[190px] truncate" :class="item.passed ? '' : 'text-ink'" :style="item.passed ? { opacity: 0.72 } : {}">
         {{ item.rule_name }}
+        <span
+          v-if="item.rule_deleted"
+          class="text-[9.5px] text-ink-soft border border-dashed border-rule px-1 ml-1"
+          title="规则已删除，此处显示的是批次封存时的规则定义"
+        >已删除</span>
       </span>
       <span class="text-[10.5px] text-ink-soft w-[86px] shrink-0">{{ item.column_name }}</span>
+      <span
+        v-if="item.param_summary && item.param_summary !== '-'"
+        class="text-[10px] text-ink-soft truncate flex-1 min-w-0"
+        :title="item.param_summary"
+      >{{ item.param_summary }}</span>
+      <span v-else class="flex-1 min-w-0"></span>
       <SeverityBadge :severity="item.severity" class="w-[52px] shrink-0" />
       <span class="text-[11px] tabular-nums w-[86px] text-right shrink-0">
         <template v-if="item.error_code">

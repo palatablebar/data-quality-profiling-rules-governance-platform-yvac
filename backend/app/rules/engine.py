@@ -21,6 +21,7 @@ from app.models import Dataset, Issue, QualityRule, RuleRun, RuleRunItem
 from app.profiling.loader import load_frame
 from app.rules.base import RuleContext, RuleResult
 from app.rules.registry import get_checker
+from app.services import snapshot_service
 from app.utils import storage
 from app.utils.formatters import rule_param_summary
 from app.utils.logger import log_event
@@ -71,6 +72,9 @@ def execute_batch(
     loaded = load_frame(dataset.file_path, dataset.source_format)
     df = loaded.df
     run.rows_scanned = loaded.row_count
+    # Capture the data fingerprint of the exact file being scanned, before any
+    # concurrent re-upload can swap or remove it.
+    snapshot_service.stamp_fingerprint(run, dataset, loaded)
     db.commit()
 
     log_event(
@@ -95,6 +99,8 @@ def execute_batch(
             rule_type=rule.rule_type,
             column_name=rule.column_name,
             severity=rule.severity,
+            params_json=dict(rule.params_json or {}),
+            sample_limit=int(rule.sample_limit or 200),
             passed=True,
             violation_count=0,
             persisted_count=0,
@@ -143,6 +149,7 @@ def execute_batch(
                         rule_id=rule.id,
                         row_index=row_index,
                         column_name=rule.column_name,
+                        severity=rule.severity,
                         observed_value=observed[:2000],
                         expected_expr=expected[:2000],
                         status=IssueStatus.OPEN.value,
@@ -193,6 +200,9 @@ def execute_batch(
     run.finished_at = datetime.now()
     if run.kind == "rules" and not run.report_no:
         run.report_no = _next_report_no(db)
+    # Seal the batch: freeze the profile appendix alongside the fingerprint
+    # captured at load time, so this report stays valid no matter what changes.
+    snapshot_service.seal_run(db, run, dataset.id, with_profile_snapshot=True)
     db.commit()
 
     log_event(

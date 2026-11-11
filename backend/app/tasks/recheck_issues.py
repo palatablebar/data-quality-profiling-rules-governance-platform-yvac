@@ -24,7 +24,11 @@ def recheck_issues(self, run_id: int) -> dict:
         loaded = load_frame(dataset.file_path, dataset.source_format)
         rules = (
             db.query(QualityRule)
-            .filter(QualityRule.dataset_id == dataset.id, QualityRule.is_active.is_(True))
+            .filter(
+                QualityRule.dataset_id == dataset.id,
+                QualityRule.is_active.is_(True),
+                QualityRule.is_deleted.is_(False),
+            )
             .all()
         )
         violations: dict[int, set[int]] = {}

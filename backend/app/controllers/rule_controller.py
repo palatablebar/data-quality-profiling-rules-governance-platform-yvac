@@ -71,6 +71,6 @@ def _get_rule(db: Session, rule_id: int):
     from app.models import QualityRule
 
     rule = db.get(QualityRule, rule_id)
-    if rule is None:
+    if rule is None or rule.is_deleted:
         raise AppError(ErrorCode.RULE_PARAMS_INVALID, message="规则不存在", status_code=404, detail={"rule_id": rule_id})
     return rule

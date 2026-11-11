@@ -4,6 +4,7 @@ export interface Issue {
   rule_id: number | null
   rule_name: string | null
   rule_type: string | null
+  rule_deleted: boolean
   severity: string
   severity_label: string
   column_name: string

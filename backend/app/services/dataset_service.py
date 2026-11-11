@@ -6,9 +6,10 @@ from sqlalchemy.orm import Session
 from app.config.settings import settings
 from app.constants.error_codes import AppError, ErrorCode
 from app.log_helpers import audit_event  # noqa: F401  (re-exported for controllers)
-from app.models import ColumnProfile, Dataset, Issue, QualityRule, RuleRun, User
+from app.models import Dataset, Issue, QualityRule, RuleRun, User
 from app.profiling.loader import load_frame
 from app.schemas.dataset import serialize_dataset
+from app.services import snapshot_service
 from app.utils import storage
 from app.utils.logger import log_event
 
@@ -23,7 +24,12 @@ def _profile_run(db: Session, dataset_id: int):
 
 
 def _rule_count(db: Session, dataset_id: int) -> int:
-    return db.query(func.count(QualityRule.id)).filter(QualityRule.dataset_id == dataset_id).scalar() or 0
+    return (
+        db.query(func.count(QualityRule.id))
+        .filter(QualityRule.dataset_id == dataset_id, QualityRule.is_deleted.is_(False))
+        .scalar()
+        or 0
+    )
 
 
 def _open_issue_count(db: Session, dataset_id: int) -> int:
@@ -114,12 +120,23 @@ def upsert_dataset(
         db.add(dataset)
     else:
         old_path = dataset.file_path
+        old_checksum = dataset.checksum
         dataset.source_format = fmt
         dataset.file_path = path
         dataset.checksum = checksum
         dataset.is_deleted = False
         if old_path and old_path != path and os.path.exists(old_path):
-            storage.remove_file(old_path)
+            # A sealed historical batch may still point at the superseded
+            # file — keep it so old reports stay verifiable against source.
+            if snapshot_service.source_file_referenced(db, old_checksum, old_path):
+                log_event(
+                    "DATASET_FILE_RETAINED",
+                    dataset_id=dataset.id,
+                    path=old_path,
+                    reason="referenced by sealed run",
+                )
+            else:
+                storage.remove_file(old_path)
     dataset.row_count = loaded.row_count
     dataset.column_count = loaded.column_count
     dataset.file_size = size
@@ -141,11 +158,23 @@ def delete_dataset(db: Session, dataset: Dataset, actor: User) -> dict:
     before = {"id": dataset.id, "name": dataset.name}
     dataset.is_deleted = True
     dataset.status = "deleted"
-    db.query(QualityRule).filter(QualityRule.dataset_id == dataset.id).delete()
-    db.query(ColumnProfile).filter(ColumnProfile.dataset_id == dataset.id).delete()
+    # Soft-delete the rules (they vanish from lists/executions but the rows
+    # stay for historical evidence) and keep column profiles: sealed reports
+    # of old batches must not lose their quantile appendix or rule context.
+    db.query(QualityRule).filter(QualityRule.dataset_id == dataset.id).update(
+        {"is_deleted": True, "is_active": False}, synchronize_session="fetch"
+    )
     db.commit()
-    removed = storage.remove_file(dataset.file_path)
-    if not removed:
-        log_event("DATASET_FILE_MISSING", dataset_id=dataset.id, path=dataset.file_path)
+    if snapshot_service.source_file_referenced(db, dataset.checksum, dataset.file_path):
+        log_event(
+            "DATASET_FILE_RETAINED",
+            dataset_id=dataset.id,
+            path=dataset.file_path,
+            reason="referenced by sealed run",
+        )
+    else:
+        removed = storage.remove_file(dataset.file_path)
+        if not removed:
+            log_event("DATASET_FILE_MISSING", dataset_id=dataset.id, path=dataset.file_path)
     log_event("DATASET_DELETED", dataset_id=dataset.id, name=dataset.name)
     return before

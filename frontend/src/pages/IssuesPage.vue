@@ -46,7 +46,10 @@
           <td @click.stop><input v-model="selectedIds" type="checkbox" :value="issue.id" /></td>
           <td><SeverityBadge :severity="issue.severity" /></td>
           <td>
-            <div class="text-[12px]">{{ issue.rule_name ?? '-' }}</div>
+            <div class="text-[12px]">
+              {{ issue.rule_name ?? '-' }}
+              <span v-if="issue.rule_deleted" class="text-[9.5px] text-ink-soft border border-dashed border-rule px-1 ml-1">已删除</span>
+            </div>
             <div class="text-[10.5px] text-ink-soft">{{ issue.column_name }}</div>
           </td>
           <td class="num">{{ issue.row_index }}</td>

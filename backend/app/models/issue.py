@@ -14,6 +14,9 @@ class Issue(Base):
     rule_id: Mapped[int | None] = mapped_column(ForeignKey("quality_rules.id"), nullable=True, index=True)
     row_index: Mapped[int] = mapped_column(Integer, nullable=False)
     column_name: Mapped[str] = mapped_column(String(190), nullable=False, default="")
+    # severity of the rule at the moment this evidence was created (snapshot:
+    # later rule edits or deletion must not rewrite historical evidence)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, default="medium")
     observed_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     expected_expr: Mapped[str | None] = mapped_column(Text, nullable=True)
     # status: IssueStatus (open|triaged|fixed|ignored)

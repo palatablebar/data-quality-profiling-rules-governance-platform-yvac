@@ -7,7 +7,6 @@ from app.constants.error_codes import AppError, ErrorCode
 from app.constants.rule_run_status import RuleRunStatus
 from app.models import ColumnProfile, Dataset, Issue, QualityRule, RuleRun, RuleRunItem, User
 from app.middlewares import quota
-from app.schemas.profile import serialize_column_profile
 from app.schemas.run import serialize_run, serialize_run_item
 from app.utils.logger import log_event
 
@@ -41,7 +40,11 @@ def bulk_run(db: Session, actor: User, dataset_id: int, rule_ids: list[int] | No
     dataset = db.get(Dataset, dataset_id)
     if dataset is None or dataset.is_deleted:
         raise AppError(ErrorCode.DATASET_NOT_FOUND, detail={"dataset_id": dataset_id})
-    query = db.query(QualityRule).filter(QualityRule.dataset_id == dataset_id, QualityRule.is_active.is_(True))
+    query = db.query(QualityRule).filter(
+        QualityRule.dataset_id == dataset_id,
+        QualityRule.is_active.is_(True),
+        QualityRule.is_deleted.is_(False),
+    )
     if rule_ids:
         query = query.filter(QualityRule.id.in_(rule_ids))
     rules = query.order_by(QualityRule.id.asc()).all()
@@ -88,6 +91,15 @@ def run_detail(db: Session, run: RuleRun) -> dict:
     payload = serialize_run(run, dataset, with_items=True)
     issue_count = db.query(Issue).filter(Issue.rule_run_id == run.id).count()
     payload["issue_count"] = issue_count
+    rule_ids = [item.rule_id for item in run.items if item.rule_id]
+    live_rules = {
+        rule.id: rule
+        for rule in db.query(QualityRule).filter(QualityRule.id.in_(rule_ids)).all()
+    } if rule_ids else {}
+    for item_payload in payload.get("items", []):
+        rule_id = item_payload.get("rule_id")
+        live_rule = live_rules.get(rule_id)
+        item_payload["rule_deleted"] = rule_id is None or live_rule is None or live_rule.is_deleted
     return payload
 
 
@@ -105,6 +117,15 @@ def cancel_run(db: Session, run: RuleRun, actor: User) -> RuleRun:
 
 
 def build_report(db: Session, run: RuleRun) -> dict:
+    """Assemble the archivable report for one batch.
+
+    Everything a regulator sees comes from the sealed snapshot first
+    (``rule_runs`` fingerprint columns, ``rule_run_items.params_json``, the
+    profile appendix frozen at seal time); live tables are only a fallback
+    for batches executed before snapshotting existed. Editing/disabling/
+    deleting rules or re-uploading the dataset therefore never rewrites an
+    old report.
+    """
     dataset = db.get(Dataset, run.dataset_id)
     items = db.query(RuleRunItem).filter(RuleRunItem.run_id == run.id).all()
     rule_ids = [item.rule_id for item in items if item.rule_id]
@@ -112,6 +133,7 @@ def build_report(db: Session, run: RuleRun) -> dict:
         rule.id: rule
         for rule in db.query(QualityRule).filter(QualityRule.id.in_(rule_ids)).all()
     } if rule_ids else {}
+    item_by_rule = {item.rule_id: item for item in items if item.rule_id}
     issues = (
         db.query(Issue)
         .filter(Issue.rule_run_id == run.id)
@@ -119,38 +141,44 @@ def build_report(db: Session, run: RuleRun) -> dict:
         .limit(200)
         .all()
     )
-    profiles = (
-        db.query(ColumnProfile)
-        .filter(ColumnProfile.dataset_id == run.dataset_id)
-        .order_by(ColumnProfile.ordinal.asc())
-        .all()
-    )
+    from app.schemas.common import iso
     from app.utils.formatters import fmt_percentile, rule_param_summary
 
-    return {
-        "report_no": run.report_no or f"QC-202611-{run.id:03d}",
-        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "dataset": {
-            "id": dataset.id,
-            "name": dataset.name,
-            "source_format": dataset.source_format,
-            "row_count": dataset.row_count,
-            "column_count": dataset.column_count,
-            "checksum": dataset.checksum,
-        },
-        "batch": serialize_run(run, dataset),
-        "rules": [
-            {
-                **serialize_run_item(item),
-                "params": (rules.get(item.rule_id).params_json if rules.get(item.rule_id) else {}) or {},
-                "param_summary": rule_param_summary(
-                    item.rule_type,
-                    (rules.get(item.rule_id).params_json if rules.get(item.rule_id) else {}) or {},
-                ),
-            }
-            for item in items
-        ],
-        "quantiles": [
+    def item_params(item: RuleRunItem) -> dict:
+        if item.params_json is not None:
+            return item.params_json
+        live = rules.get(item.rule_id)
+        return (live.params_json if live else {}) or {}
+
+    # Data fingerprint: sealed values win; live dataset row is the legacy fallback.
+    dataset_block = {
+        "id": run.dataset_id,
+        "name": run.dataset_name or (dataset.name if dataset else None),
+        "source_format": run.dataset_format or (dataset.source_format if dataset else None),
+        "row_count": run.dataset_row_count if run.dataset_row_count is not None else (dataset.row_count if dataset else 0),
+        "column_count": run.dataset_column_count if run.dataset_column_count is not None else (dataset.column_count if dataset else 0),
+        "checksum": run.dataset_checksum or (dataset.checksum if dataset else ""),
+        "file_size": run.dataset_file_size if run.dataset_file_size is not None else (dataset.file_size if dataset else 0),
+        "file_path": run.dataset_file_path,
+        "sealed": run.sealed_at is not None,
+        "sealed_at": iso(run.sealed_at),
+    }
+
+    # Quantile appendix: the profile snapshot frozen at seal time, else the
+    # current column profiles (legacy batches only).
+    if run.profile_snapshot_json is not None:
+        quantiles = [
+            {**entry, "p50": fmt_percentile(entry.get("p50")), "p95": fmt_percentile(entry.get("p95"))}
+            for entry in run.profile_snapshot_json
+        ]
+    else:
+        profiles = (
+            db.query(ColumnProfile)
+            .filter(ColumnProfile.dataset_id == run.dataset_id)
+            .order_by(ColumnProfile.ordinal.asc())
+            .all()
+        )
+        quantiles = [
             {
                 "column_name": profile.column_name,
                 "inferred_type": profile.inferred_type,
@@ -162,21 +190,50 @@ def build_report(db: Session, run: RuleRun) -> dict:
                 "outlier_count": profile.outlier_count,
             }
             for profile in profiles
-        ],
-        "violation_samples": [
+        ]
+
+    def sample_attribution(issue: Issue) -> tuple[str | None, str | None]:
+        """rule_name/severity for one violation sample — snapshot first."""
+        item = item_by_rule.get(issue.rule_id)
+        if item is not None:
+            return item.rule_name, item.severity
+        live = rules.get(issue.rule_id)
+        return (live.name if live else None), (live.severity if live else None)
+
+    violation_samples = []
+    for issue in issues:
+        rule_name, severity = sample_attribution(issue)
+        violation_samples.append(
             {
                 "issue_id": issue.id,
                 "rule_id": issue.rule_id,
-                "rule_name": rules.get(issue.rule_id).name if rules.get(issue.rule_id) else None,
-                "severity": rules.get(issue.rule_id).severity if rules.get(issue.rule_id) else None,
+                "rule_name": rule_name,
+                "severity": issue.severity or severity,
                 "row_index": issue.row_index,
                 "column_name": issue.column_name,
                 "observed_value": issue.observed_value,
                 "expected_expr": issue.expected_expr,
                 "status": issue.status,
             }
-            for issue in issues
+        )
+
+    return {
+        "report_no": run.report_no or f"QC-202611-{run.id:03d}",
+        "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "sealed_at": iso(run.sealed_at),
+        "dataset": dataset_block,
+        "batch": serialize_run(run, dataset),
+        "rules": [
+            {
+                **serialize_run_item(item),
+                "params": item_params(item),
+                "param_summary": rule_param_summary(item.rule_type, item_params(item)),
+                "rule_deleted": item.rule_id is None or item.rule_id not in rules or rules[item.rule_id].is_deleted,
+            }
+            for item in items
         ],
+        "quantiles": quantiles,
+        "violation_samples": violation_samples,
         "summary": {
             "rules_total": run.rules_total,
             "rules_passed": run.rules_passed,

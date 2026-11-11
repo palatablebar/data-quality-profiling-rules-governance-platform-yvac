@@ -45,8 +45,20 @@ docker compose exec backend python -m scripts.seed_demo
 
 - **列级剖析**：`profiling/loader.py` 读 CSV/Parquet/JSONL/XLSX（重复列名 400、非 UTF-8 400、超行数 400）；`type_infer.py` 抽样 1 万行按命中率 ≥0.95 判类型；`stats.py` 全量算空值率/基数/分位/Top 值；`pattern.py` 字符类归并推断正则与命中率；`outliers.py` IQR 1.5 倍异常值。
 - **规则构建与批量执行**：7 种 `RuleType` 各自独立校验器，pandas 向量化定位 + 逐条保留 `row_index` 与原文 `observed_value`，每规则最多落 `sample_limit` 条 Issue 但统计值记真实数量；违规行同时写入隔离卷 `run_XXXXXX_quarantine.csv`。
+- **批次封存（监管回看）**：每次执行成功即把当时的数据指纹（源文件 SHA-256、行/列数、大小、路径）、生效规则（含 `params_json` 与严重度）和列级剖析附录冻结在批次行上；规则软删除、同名重传、数据集删除都只影响新批次，旧报告独立查看/导出且能对应到源文件（被引用的源文件不会被清理）。详见「批次封存与历史证据」一节。
 - **问题分诊与指派**：状态机 `open → triaged → fixed/ignored`，支持按严重度/状态/规则筛选、批量指派、复制复现片段。
 - **审计与配额**：写操作在响应阶段写入 `audit_logs`（before/after 快照）；`users.daily_scan_quota` + Redis 滑动窗口 + `SETNX runlock:{dataset_id}` 保证同一数据集不并行执行，超限 429 并带 `retry_after`。
+
+## 批次封存与历史证据
+
+监管抽查会回看几个月前的批次，因此**每次执行成功的执行都是自包含的归档**，之后的任何修改只影响新批次：
+
+- **数据指纹**：批次开始扫描时即采集源文件 SHA-256、行/列数、文件大小与路径（`rule_runs.dataset_*`），成功时写入 `sealed_at`；同名文件重传后，旧批次仍显示当时那份数据的指纹。
+- **生效规则**：`rule_run_items` 快照规则的名称/类型/列/严重度/**参数**（`params_json`）与 `sample_limit`；改规则、调严重度不会回写旧批次。
+- **违规证据**：`issues.severity` 记录取证当时的严重度；删除规则是软删除（`quality_rules.is_deleted`），规则行与其 issues 全部保留，历史证据不断链，已删规则在界面上带「已删除」标记。
+- **源数据保留**：重传或删除数据集时，若旧文件仍被某个已封存批次（或正在执行的批次）引用，文件保留在 `dataset_data` 卷上，报告里的指纹可与之核对。
+- **报告独立**：`GET /runs/{id}/report` 与批次详情全部从封存快照装配（live 表仅作封存前旧批次的回退），导出的 JSON 报告单可脱离当前库状态独立存档。
+- **平滑升级**：启动时 `config/schema_patch.py` 幂等补列/回填（老批次从 live 表回填指纹并冻结剖析附录）；使用 Alembic 的部署可执行 `alembic upgrade head`（`20261111_0002`）达到同样效果。
 
 ## 技术栈
 

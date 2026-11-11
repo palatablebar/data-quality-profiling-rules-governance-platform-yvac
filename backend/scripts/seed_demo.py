@@ -170,7 +170,11 @@ def _ensure_rules(db, dataset: Dataset, actor: User) -> list[QualityRule]:
     for spec in PRESET_RULES:
         rule = (
             db.query(QualityRule)
-            .filter(QualityRule.dataset_id == dataset.id, QualityRule.name == spec["name"])
+            .filter(
+                QualityRule.dataset_id == dataset.id,
+                QualityRule.name == spec["name"],
+                QualityRule.is_deleted.is_(False),
+            )
             .first()
         )
         if rule is None:
@@ -270,7 +274,7 @@ def run_seed() -> dict:
         run = _ensure_history_run(db, account_dataset, rules, steward, analyst)
 
         datasets = db.query(Dataset).filter(Dataset.is_deleted.is_(False)).count()
-        rule_count = db.query(QualityRule).count()
+        rule_count = db.query(QualityRule).filter(QualityRule.is_deleted.is_(False)).count()
         run_count = db.query(RuleRun).filter(RuleRun.kind == "rules").count()
         issue_count = db.query(Issue).count()
         log_event(

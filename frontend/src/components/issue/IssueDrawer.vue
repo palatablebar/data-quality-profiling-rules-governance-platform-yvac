@@ -7,7 +7,13 @@
           <div class="px-6 pt-5 pb-3 border-b border-rule flex items-start justify-between gap-4">
             <div>
               <div class="eyebrow">issue no. {{ issue.id }}</div>
-              <h2 class="display !text-[20px] mt-1">{{ issue.rule_name ?? '问题单' }}</h2>
+              <h2 class="display !text-[20px] mt-1">
+                {{ issue.rule_name ?? '问题单' }}
+                <span
+                  v-if="issue.rule_deleted"
+                  class="text-[10px] text-ink-soft border border-dashed border-rule px-1 align-middle"
+                >规则已删除 · 证据保留</span>
+              </h2>
               <div class="mt-1 flex items-center gap-3">
                 <SeverityBadge :severity="issue.severity" />
                 <span class="text-[11px] text-ink-soft">{{ issue.dataset_name }} · {{ issue.report_no ?? '-' }}</span>

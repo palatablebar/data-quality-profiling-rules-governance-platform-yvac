@@ -5,6 +5,10 @@ export interface RunItem {
   rule_type: string
   column_name: string
   severity: string
+  params: Record<string, unknown>
+  param_summary: string
+  sample_limit: number
+  rule_deleted?: boolean
   passed: boolean
   violation_count: number
   persisted_count: number
@@ -30,6 +34,14 @@ export interface RuleRun {
   duration_display: string
   report_no: string | null
   error_code: string | null
+  /** sealed data fingerprint — frozen when the batch succeeded */
+  sealed: boolean
+  sealed_at: string | null
+  dataset_checksum: string | null
+  dataset_row_count: number | null
+  dataset_column_count: number | null
+  dataset_file_size: number | null
+  dataset_file_path: string | null
   started_at: string | null
   finished_at: string | null
   created_at: string | null
@@ -43,9 +55,10 @@ export interface RunDetail extends RuleRun {
 export interface ReportPayload {
   report_no: string
   generated_at: string
-  dataset: Record<string, string | number>
+  sealed_at: string | null
+  dataset: Record<string, string | number | boolean | null>
   batch: RuleRun
-  rules: Array<RunItem & { params: Record<string, unknown>; param_summary: string }>
+  rules: Array<RunItem & { params: Record<string, unknown>; param_summary: string; rule_deleted: boolean }>
   quantiles: Array<Record<string, string | number | null>>
   violation_samples: Array<Record<string, string | number | null>>
   summary: Record<string, number>

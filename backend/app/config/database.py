@@ -39,8 +39,14 @@ def init_db(max_attempts: int = 30, delay: float = 2.0) -> None:
     for _ in range(max_attempts):
         try:
             Base.metadata.create_all(bind=engine)
-            return
+            break
         except Exception as exc:  # pragma: no cover - infra retry
             last_error = exc
             time.sleep(delay)
-    raise RuntimeError(f"database bootstrap failed: {last_error}")
+    else:
+        raise RuntimeError(f"database bootstrap failed: {last_error}")
+    # create_all never alters existing tables — apply the incremental patches
+    # (sealed-snapshot columns, soft-delete flag, backfills) idempotently.
+    from app.config.schema_patch import apply_schema_patch
+
+    apply_schema_patch(engine)

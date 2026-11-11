@@ -1,4 +1,4 @@
-"""Central structured-log catalogue (24 templates).
+"""Central structured-log catalogue.
 
 Every service / controller / task logs exclusively through
 ``utils.logger.log_event(key, **fields)`` so that changing a template here
@@ -13,6 +13,7 @@ LOG_TEMPLATES = {
     "UPLOAD_VALIDATION_FAILED": "upload validation failed name={name} error_code={error_code} reason={reason}",
     "DATASET_DELETED": "dataset soft-deleted dataset_id={dataset_id} name={name}",
     "DATASET_FILE_MISSING": "dataset file missing on shared volume dataset_id={dataset_id} path={path}",
+    "DATASET_FILE_RETAINED": "dataset file retained for sealed history dataset_id={dataset_id} path={path} reason={reason}",
     # --- profiling ---
     "PROFILE_ENQUEUED": "profile enqueued dataset_id={dataset_id} run_id={run_id}",
     "PROFILE_STARTED": "profile started dataset_id={dataset_id} run_id={run_id} rows={rows}",
@@ -30,6 +31,7 @@ LOG_TEMPLATES = {
     "RUN_STARTED": "run started run_id={run_id} dataset_id={dataset_id} rules_total={rules_total} rows={rows_scanned}",
     "RUN_RULE_FINISHED": "rule finished run_id={run_id} rule_id={rule_id} column={column} passed={passed} violations={violations} duration_ms={duration_ms}",
     "RUN_FINISHED": "run finished run_id={run_id} status={status} passed={rules_passed} failed={rules_failed} duration_ms={duration_ms}",
+    "RUN_SEALED": "run sealed run_id={run_id} dataset_id={dataset_id} checksum={checksum} rows={rows}",
     "RUN_FAILED": "run failed run_id={run_id} error_code={error_code} reason={reason}",
     "RUN_CANCELLED": "run cancelled run_id={run_id} by={actor_id}",
     # --- issues ---
@@ -46,6 +48,12 @@ LOG_TEMPLATES = {
     "SEED_DEMO_FAILED": "demo seed failed error={error}",
     "AUTH_LOGIN_SUCCEEDED": "login succeeded user_id={user_id} role={role}",
     "AUTH_LOGIN_FAILED": "login failed email={email} reason={reason}",
+    # --- schema patch (startup) ---
+    "SCHEMA_PATCH_COLUMN": "schema patch column added table={table} column={column}",
+    "SCHEMA_PATCH_DROP_INDEX": "schema patch index dropped table={table} index={index}",
+    "SCHEMA_PATCH_INDEX": "schema patch index created table={table} index={index}",
+    "SCHEMA_PATCH_BACKFILL": "schema patch backfill table={table} rows={rows}",
+    "SCHEMA_PATCH_APPLIED": "schema patch applied columns={columns}",
 }
 
 REQUIRED_FIELDS = {

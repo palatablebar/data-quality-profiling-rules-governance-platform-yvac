@@ -57,6 +57,32 @@
           <div><div class="label">违规样本</div><div class="text-[13px] tabular-nums">{{ runStore.detail.issue_count }}</div></div>
         </div>
 
+        <div v-if="runStore.detail.sealed" class="mt-3 border border-rule bg-paper-2 px-4 py-3">
+          <div class="flex items-baseline justify-between">
+            <div class="eyebrow">封存指纹 · 此后规则与数据的修改不影响本批次</div>
+            <div class="text-[10.5px] text-ink-soft tabular-nums">封存于 {{ runStore.detail.sealed_at ?? '-' }}</div>
+          </div>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-x-8 gap-y-2 mt-2">
+            <div class="col-span-2">
+              <div class="label">源数据 SHA-256</div>
+              <div class="text-[12px] tabular-nums" :title="runStore.detail.dataset_checksum ?? ''">
+                {{ shortChecksum(runStore.detail.dataset_checksum) }}…
+              </div>
+            </div>
+            <div>
+              <div class="label">源数据规模</div>
+              <div class="text-[12px] tabular-nums">
+                {{ formatInt(runStore.detail.dataset_row_count) }} 行 × {{ runStore.detail.dataset_column_count ?? '-' }} 列
+              </div>
+            </div>
+            <div>
+              <div class="label">源文件</div>
+              <div class="text-[12px] tabular-nums truncate" :title="runStore.detail.dataset_file_path ?? ''">
+                {{ sourceFileName(runStore.detail.dataset_file_path) }} · {{ formatBytes(runStore.detail.dataset_file_size) }}
+              </div>
+            </div>
+          </div>
+        </div>
         <RunProgressList class="mt-3" :items="runStore.detail.items" :run-status="runStore.detail.status" @drill="drill" />
 
         <p v-if="runStore.detail.status === 'queued' || runStore.detail.status === 'running'" class="mt-3 text-[11.5px] text-ink-soft">
@@ -64,7 +90,7 @@
         </p>
 
         <div class="mt-6 border-t border-rule pt-3 flex items-center justify-between text-[10.5px] text-ink-soft">
-          <span>数据集 #{{ runStore.detail.dataset_id }} · {{ runStore.detail.dataset_format }}</span>
+          <span>数据集 #{{ runStore.detail.dataset_id }} · {{ runStore.detail.dataset_name }} · {{ runStore.detail.dataset_format }}</span>
           <span>耗时 {{ runStore.detail.duration_display }} · 结束于 {{ runStore.detail.finished_at ?? '-' }}</span>
         </div>
         <ActivityTrail />
@@ -88,6 +114,7 @@ import { useRuleStore } from '../stores/ruleStore'
 import { useAuthStore } from '../stores/authStore'
 import { useRunPolling } from '../hooks/useRunPolling'
 import { fetchReport } from '../api/run'
+import { formatBytes, formatInt, shortChecksum } from '../utils/formatters'
 import type { RunItem } from '../types/run'
 
 const route = useRoute()
@@ -128,6 +155,11 @@ function drill(item: RunItem) {
   const run = runStore.detail
   if (!run) return
   router.push({ path: '/issues', query: { dataset: String(run.dataset_id), rule: String(item.rule_id ?? '') } })
+}
+
+function sourceFileName(path: string | null): string {
+  if (!path) return '-'
+  return path.split('/').pop() ?? path
 }
 
 async function downloadReport() {

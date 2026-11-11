@@ -12,6 +12,7 @@ from app.profiling.loader import load_frame
 from app.profiling.suggest import suggest_for_dataset
 from app.schemas.dataset import serialize_profile_run_ref
 from app.schemas.profile import serialize_column_profile
+from app.services import snapshot_service
 from app.utils.logger import log_event
 
 
@@ -55,6 +56,8 @@ def compute_profiles(db: Session, dataset: Dataset, run: RuleRun) -> int:
     loaded = load_frame(dataset.file_path, dataset.source_format)
     df = loaded.df
     total_rows = loaded.row_count
+    snapshot_service.stamp_fingerprint(run, dataset, loaded)
+    db.commit()
     log_event("PROFILE_STARTED", dataset_id=dataset.id, run_id=run.id, rows=total_rows)
 
     db.query(ColumnProfile).filter(ColumnProfile.dataset_id == dataset.id).delete()
@@ -99,6 +102,9 @@ def compute_profiles(db: Session, dataset: Dataset, run: RuleRun) -> int:
     run.duration_ms = int((time.perf_counter() - started) * 1000)
     run.status = RuleRunStatus.SUCCEEDED.value
     run.finished_at = datetime.now()
+    # Seal the data fingerprint of the profiled file (the profile rows
+    # themselves are this run's product, so no separate profile appendix).
+    snapshot_service.seal_run(db, run, dataset.id, with_profile_snapshot=False)
     db.commit()
     log_event(
         "PROFILE_FINISHED",

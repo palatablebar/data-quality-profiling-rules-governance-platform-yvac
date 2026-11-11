@@ -32,7 +32,8 @@ def list_issues(
     if dataset_id is not None:
         query = query.join(RuleRun, Issue.rule_run_id == RuleRun.id).filter(RuleRun.dataset_id == dataset_id)
     if severity:
-        query = query.filter(QualityRule.severity == severity)
+        # filter on the severity frozen into the evidence, not the live rule
+        query = query.filter(Issue.severity == severity)
     if status:
         query = query.filter(Issue.status == status)
     if rule_id is not None:
@@ -52,8 +53,9 @@ def summary(db: Session, dataset_id: int | None = None) -> dict:
     by_severity = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     by_status = {"open": 0, "triaged": 0, "fixed": 0, "ignored": 0}
     for issue in rows:
-        if issue.rule:
-            by_severity[issue.rule.severity] = by_severity.get(issue.rule.severity, 0) + 1
+        severity = issue.severity or (issue.rule.severity if issue.rule else None)
+        if severity:
+            by_severity[severity] = by_severity.get(severity, 0) + 1
         by_status[issue.status] = by_status.get(issue.status, 0) + 1
     return {
         "total": len(rows),

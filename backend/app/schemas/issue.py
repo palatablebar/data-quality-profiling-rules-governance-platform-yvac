@@ -30,14 +30,20 @@ def serialize_issue(issue, rule=None, assignee=None, run=None) -> dict:
         report_no = getattr(run, "report_no", None)
         dataset = getattr(run, "dataset", None)
         dataset_name = dataset.name if dataset is not None else None
+    # Severity comes from the evidence snapshot; the live rule row (which may
+    # have been edited since) is only a fallback for pre-snapshot issues.
+    severity = getattr(issue, "severity", None) or (rule.severity if rule else "medium")
+    rule_name = rule.name if rule else None
+    rule_deleted = bool(getattr(rule, "is_deleted", False)) if rule else False
     return {
         "id": issue.id,
         "rule_run_id": issue.rule_run_id,
         "rule_id": issue.rule_id,
-        "rule_name": rule.name if rule else None,
+        "rule_name": rule_name,
         "rule_type": rule.rule_type if rule else None,
-        "severity": rule.severity if rule else "medium",
-        "severity_label": severity_label(rule.severity if rule else "medium"),
+        "rule_deleted": rule_deleted,
+        "severity": severity,
+        "severity_label": severity_label(severity),
         "column_name": issue.column_name,
         "row_index": issue.row_index,
         "observed_value": issue.observed_value,
